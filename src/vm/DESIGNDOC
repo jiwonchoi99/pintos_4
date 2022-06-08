@@ -1,0 +1,268 @@
+       	       	    +---------------------------+
+		    |		EE 415		|
+		    | PROJECT 3: VIRTUAL MEMORY	|
+		    |	   DESIGN DOCUMENT	|
+		    +---------------------------+
+
+---- GROUP ----
+
+>> Fill in the names and email addresses of your group members.
+
+Jiwon Choi <jirus@kaist.ac.kr>
+Kahee Lim <limgh55@kaist.ac.kr>
+
+---- PRELIMINARIES ----
+
+>> If you have any preliminary comments on your submission, notes for the
+>> TAs, or extra credit, please give them here.
+
+>> Please cite any offline or online sources you consulted while
+>> preparing your submission, other than the Pintos documentation, course
+>> text, lecture notes, and course staff.
+
+			PAGE TABLE MANAGEMENT
+			=====================
+
+---- DATA STRUCTURES ----
+
+>> A1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+1. 'struct vm_entry', declared in "vm/page.h"
+	- for the page in virtual address,
+	  store the file *, offset, file data size, etc.'
+
+2. struct member of struct thread, 'struct hash vm', declared in "threads/thread.h"
+	- to manage the vm_entry, using hash table
+
+3. macro, 'VM_BIN', 'VM_FILE', 'VM_ANON' that each correspond to 0, 1, 2, defined in "vm/page.h"
+	- the virtual page types of vm_entry, we handle this vm_entry differently according to the type of page
+
+
+---- ALGORITHMS ----
+
+>> A2: In a few paragraphs, describe your code for locating the frame,
+>> if any, that contains the data of a given page.
+
+page_fault가 발생하면, vme_search(fault_addr)를 통해서 vm_entry를 검색하고,
+해당하는 vm_entry에 대해 handle_mm_fault(vme)를 통해서 physical page allocation 및 vme의 type에 따라
+load_file, 혹은 swap_in을 진행하고, virtual address와 physical address에 대해 install_page를 실행한다.
+
+>> A3: How does your code coordinate accessed and dirty bits between
+>> kernel and user virtual addresses that alias a single frame, or
+>> alternatively how do you avoid the issue?
+
+user virtual address 영역의 virtual address에 대해서만 page_fault 처리를 진행하기 때문에, 
+kernel/user 간의 coordination 문제가 발생하지 않는다.
+
+---- SYNCHRONIZATION ----
+
+>> A4: When two user processes both need a new frame at the same time,
+>> how are races avoided?
+
+physical page를 요청하는 palloc_get_page를 사용하고자 할 때에, 
+'vm/page.c'에 정의한 page_allocation 함수를 사용했다.
+이 함수 안에서, lru_list_lock이라는 lock을 사용해서 
+frame 할당에 대한 race condition을 피하고자 했다.
+
+
+---- RATIONALE ----
+
+>> A5: Why did you choose the data structure(s) that you did for
+>> representing virtual-to-physical mappings?
+
+virtual_address에 대한 struct로 vm_entry를 사용했고, 
+physical memory에 대한 struct로 page라는 struct를 사용했다.
+struct page의 struct member로 vm_entry pointer를 사용함으로써 
+virtual-to-physical mapping이 가능하다.
+
+
+		       PAGING TO AND FROM DISK
+		       =======================
+
+---- DATA STRUCTURES ----
+
+>> B1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+1. 'struct page', declared in "vm/page.h"
+	- to represent the allocated physical page, 
+	  has struct member kaddr pointer, vm_entry pointer, thread pointer, list_elem lru
+
+2. global variable, 'struct list lru_list', declared in "vm/page.c"
+	- manage the physical pages globally, element is the member ofr struct page 'list_elem lru'
+
+3. global variable, 'struct lock lru_list_lock', declared in "vm/page.c"
+	- to protect lru management from racing condition
+
+4. global variable, 'list_elem * lru_clock_elem', declared in "vm/page.c"
+	- to point the current first list_elem lru pointer, start point of lru algorithm
+
+5. global variable, 'static struct lock swap_lock', declared in "vm/swap.c"
+	- to protect swapping management from racing condition
+
+6. global variable, 'static struct block *swap', declared in "vm/swap.c"
+	- to represent the swap partition to implement swapping 
+
+7. global variable, 'static struct bitmap * swap_bitmap', declared in "vm/swap.c"
+	- to indicate whether the swap slot can be used
+
+
+---- ALGORITHMS ----
+
+>> B2: When a frame is required but none is free, some frame must be
+>> evicted.  Describe your code for choosing a frame to evict.
+
+global list인 lru_list를 순회하며 victim이 될 page를 찾는다. lru clock algorithm을 사용하여
+lru_list를 순회하며, accessed bit이 0인 page를 찾아 해당 page를 victim으로 한다.
+
+>> B3: When a process P obtains a frame that was previously used by a
+>> process Q, how do you adjust the page table (and any other data
+>> structures) to reflect the frame Q no longer has?
+
+victim으로 선택한 이후, lru_list에서 제거하고, pagedir_clear_page 함수를 사용하여
+기존 process와의 mapping 등을 정리한다.
+
+
+>> B4: Explain your heuristic for deciding whether a page fault for an
+>> invalid virtual address should cause the stack to be extended into
+>> the page that faulted.
+
+해당 address에 대해, user영역의 virtual영역이며, PHYS_BASE 기준으로 8MB 안 쪽의 영역이며,
+현재의 esp와 32B 차이 이내인 경우에 대하여 stack extend를 시행하도록 하였다.
+
+---- SYNCHRONIZATION ----
+
+>> B5: Explain the basics of your VM synchronization design.  In
+>> particular, explain how it prevents deadlock.  (Refer to the
+>> textbook for an explanation of the necessary conditions for
+>> deadlock.)
+
+filesys_lock, lru_list_lock, swap_lock을 사용하여 race condition을 피하고자 하였다.
+lock 사용 시에, 하나의 process가 2개의 lock을 점유하고 있지 못하도록 해서 deadlock을 방지했다.
+
+>> B6: A page fault in process P can cause another process Q's frame
+>> to be evicted.  How do you ensure that Q cannot access or modify
+>> the page during the eviction process?  How do you avoid a race
+>> between P evicting Q's frame and Q faulting the page back in?
+
+lru_list_lock을 사용해서, P가 Q의 frame에 대한 eviction 처리를 진행하는 중에는
+Q가 page에 대해 접근 및 수정을 하지 못하도록 했다.
+
+
+>> B7: Suppose a page fault in process P causes a page to be read from
+>> the file system or swap.  How do you ensure that a second process Q
+>> cannot interfere by e.g. attempting to evict the frame while it is
+>> still being read in?
+
+swapping 과정에서 swap_lock을 사용해서 swapiing 과정 중의 race condition을 방지했다.
+file system으로부터 읽어오는 과정에 대해서는 filesys_lock을 사용해서 race condition을 방지했다.
+
+
+>> B8: Explain how you handle access to paged-out pages that occur
+>> during system calls.  Do you use page faults to bring in pages (as
+>> in user programs), or do you have a mechanism for "locking" frames
+>> into physical memory, or do you use some other design?  How do you
+>> gracefully handle attempted accesses to invalid virtual addresses?
+
+page에 pinned라는 struct member를 사용해서, 현재 해당 page가 read, write되는 중인지를
+표기하도록 하였다. 이를 사용하여, 현재 해당 page가 pinned = 1로 read/write되는 중에는 해당 페이지를
+victim으로 선택하지 못하도록 했다.
+
+
+
+---- RATIONALE ----
+
+>> B9: A single lock for the whole VM system would make
+>> synchronization easy, but limit parallelism.  On the other hand,
+>> using many locks complicates synchronization and raises the
+>> possibility for deadlock but allows for high parallelism.  Explain
+>> where your design falls along this continuum and why you chose to
+>> design it this way.
+
+lru_list_lock, filesys_lock, swap_lock을 사용해서 high parallelism을 지원하도록 디자인했다.
+구현 상에서 deadlock 방지 등 single lock에 비해 복잡하지만, parallelism을 하기 위하여
+여러 개의 lock을 사용하여 구현했다.
+
+
+			 MEMORY MAPPED FILES
+			 ===================
+
+---- DATA STRUCTURES ----
+
+>> C1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+1. 'struct mmap_file', declared in "vm/page.h"
+	- store the information of mmapped file,
+	  has struct member int mapid, file pointer, list_elem, vme_list
+
+2. struct member of struct thread, 'struct list mmap_list', declared in "threads/thread.h"
+	- to store the thread's mmaped files as list
+
+3. struct member of struct thread, 'int next_mapid', declared in "threads/thread.h"
+	- the next mmap_file's mapid, as one file mmaped, the next_mapid increases by 1.
+
+
+
+
+---- ALGORITHMS ----
+
+>> C2: Describe how memory mapped files integrate into your virtual
+>> memory subsystem.  Explain how the page fault and eviction
+>> processes differ between swap pages and other pages.
+
+page fault의 경우, vm_entry의 type에 따라서 다르게 처리하는데, memory mapped file에 대해서는
+vm_entry의 type을 VM_FILE로 설정한다. type이 VM_FILE이면, page handler에서 swap_in을 실행하고, 
+install_page를 진행한다.
+eviction의 경우, pagedir_is_dirty함수를 사용해서, dirty bit = 1인 경우에 file_write_at 함수를 사용해서 
+file에 다시 기록해준 뒤에 해당 page를 제거한다.
+
+>> C3: Explain how you determine whether a new file mapping overlaps
+>> any existing segment.
+
+새로운 file에 대해 mmap하고자 할 때에, vme_search 함수를 사용해서 
+해당하는 address가 이미 존재하는지를 확인한다.
+그 address에 대한 vm_entry가 존재하지 않을 때에만 mapping을 진행한다.
+
+---- RATIONALE ----
+
+>> C4: Mappings created with "mmap" have similar semantics to those of
+>> data demand-paged from executables, except that "mmap" mappings are
+>> written back to their original files, not to swap.  This implies
+>> that much of their implementation can be shared.  Explain why your
+>> implementation either does or does not share much of the code for
+>> the two situations.
+
+코드상 유사한 지점이 많다. 
+vm_entry를 생성해서 값을 초기화하고 현재 thread의 vm에 insert하는 과정에서 유사점이 많다.
+가장 큰 차이점은 vm_entry의 page type을 demand page에서는 VM_BIN으로 설정하고, 
+mmap에서는 VM_FILE로 설정한다.
+
+
+			   SURVEY QUESTIONS
+			   ================
+
+Answering these questions is optional, but it will help us improve the
+course in future quarters.  Feel free to tell us anything you
+want--these questions are just to spur your thoughts.  You may also
+choose to respond anonymously in the course evaluations at the end of
+the quarter.
+
+>> In your opinion, was this assignment, or any one of the three problems
+>> in it, too easy or too hard?  Did it take too long or too little time?
+
+>> Did you find that working on a particular part of the assignment gave
+>> you greater insight into some aspect of OS design?
+
+>> Is there some particular fact or hint we should give students in
+>> future quarters to help them solve the problems?  Conversely, did you
+>> find any of our guidance to be misleading?
+
+>> Do you have any suggestions for the TAs to more effectively assist
+>> students, either for future quarters or the remaining projects?
+
+>> Any other comments?

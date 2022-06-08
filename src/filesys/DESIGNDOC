@@ -1,0 +1,246 @@
+	       	     +-------------------------+
+		     |		EE 415	       |
+		     | PROJECT 4: FILE SYSTEMS |
+		     |	   DESIGN DOCUMENT     |
+		     +-------------------------+
+
+---- GROUP ----
+
+>> Fill in the names and email addresses of your group members.
+
+Jiwon Choi <jirus@kaist.ac.kr>
+Kahee Lim limgh55@kaist.ac.kr
+
+---- PRELIMINARIES ----
+
+>> If you have any preliminary comments on your submission, notes for the
+>> TAs, or extra credit, please give them here.
+
+We Implemented a part of dentry cache, especially a required function and structure for implementing dentry cache, which is dentry_init, dentry_destroy,
+ dentry_destructor, dentry_hash_function, dentry_less_function, dentry_insertion, dentry_deletion, dentry_search, dentry_parent_search on filesys.c, and struct hash dentry_cache, struct dc_entry on filesys.h
+ 
+We implemented on Project 3
+
+>> Please cite any offline or online sources you consulted while
+>> preparing your submission, other than the Pintos documentation, course
+>> text, lecture notes, and course staff.
+
+		     INDEXED AND EXTENSIBLE FILES
+		     ============================
+
+---- DATA STRUCTURES ----
+
+>> A1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+1. in filesys/inode.c. “struct inode_disk”의 struct member 수정
+    - direct_map_table에 direct, indirect, double_indirect 방식으로 접근할 수 있도록 하기 위해, 
+block_sector_t direct_map_table[DIRECT_BLOCK_ENTRIES], block_sector_t indirect_block_sec, 
+block_sector_t double_indirect_block_sec의 struct members를 추가했다.
+
+2. in filesys/inode.c, “#define DIRECT_BLOCK_ENTRIES 123”
+    - direct block으로 저장할 block의 개수
+
+3. in filesys/inode.c, “#define INDIRECT_BLOCK_ENTRIES (BLOCK_SECTOR_SIZE / sizeof (block_sector_t))”
+    - Indirect block entries가 저장할 수 있는 block의 개수 선언
+
+4. in filesys/inode.c, “enum direct_t”
+    - NORMAL_DIRECT, INDIRECT, DOUBLE_INDIRECT, OUT_LIMIT의 값들이 있다. 
+disk가 inode에 direct pointing인지, indirect 혹은 double indirect로 저장되어 있는지를 나타내기 위함이다.
+
+5. in filesys/inode.c, “struct sector_location”
+    - inode_disk가 저장되어있는 방식(direct, indirect, double indirect)과 
+저장되어있는 위치의 인덱스들을 struct member로 가지고 있다.
+
+6. in filesys/inode.c, “struct inode_indirect_block”
+    - inode에 indirect, double_indirect 방식으로 저장되어있는 disk들을 가리키기 
+위한 구조체이다. block_sector_t의 배열을 struct member로 갖고 있다.
+
+7. in flesys/inode.c, “struct inode”
+    - struct member로 struct lock extend_lock 추가
+
+>> A2: What is the maximum size of a file supported by your inode
+>> structure?  Show your work.
+
+direct : 123 * 512 = 62976 bytes
+indirect : 128 * 512 = 65536 bytes
+double indirect : 128 * 128 * 512 = 8388608 bytes
+total : 8517120 bytes
+
+---- SYNCHRONIZATION ----
+
+>> A3: Explain how your code avoids a race if two processes attempt to
+>> extend a file at the same time.
+inode struct 안에 extended_lock을 추가해서, race condition을 방지했다. 파일 길이를 
+확장하고자 할 때에는 lock을 획득한 상태에서만 진행할 수 있도록 했다.
+
+>> A4: Suppose processes A and B both have file F open, both
+>> positioned at end-of-file.  If A reads and B writes F at the same
+>> time, A may read all, part, or none of what B writes.  However, A
+>> may not read data other than what B writes, e.g. if B writes
+>> nonzero data, A is not allowed to see all zeros.  Explain how your
+>> code avoids this race.
+inode struct 안에 extended_lock을 추가해서, race condition을 방지했다. 
+따라서, A와 B는 동시에 파일을 읽거나 쓸 수 없다. 만일 A가 파일을 읽고 있다면 
+B는 extension을 수행할 수 없고, B가 extension을 수행하고 있다면 A는 파일을 read할 수 없다.
+
+>> A5: Explain how your synchronization design provides "fairness".
+>> File access is "fair" if readers cannot indefinitely block writers
+>> or vice versa.  That is, many processes reading from a file cannot
+>> prevent forever another process from writing the file, and many
+>> processes writing to a file cannot prevent another process forever
+>> from reading the file.
+inode를 read하고자 할 때와 inode를 write하고자 하는 경우 공통적으로 extended_lock을 획득해서만 접근할 수 있다. 
+따라서, 특정 thread가 extended_lock을 보유하고 있는 상태이더라도, 
+외부에서는 특정 thread가 read를 수행하는지, write를 수행하는 지 알 수 없다.
+
+---- RATIONALE ----
+
+>> A6: Is your inode structure a multilevel index?  If so, why did you
+>> choose this particular combination of direct, indirect, and doubly
+>> indirect blocks?  If not, why did you choose an alternative inode
+>> structure, and what advantages and disadvantages does your
+>> structure have, compared to a multilevel index?
+multilebel index의 구조를 구현하였다. multilevel index를 통해서, small file에는 direct로, 
+큰 파일에 대해서는 double_indirect로 저장하는 등 효율적으로 관리할 수 있다. 
+대부분의 파일들은 direct에 적절한 크기를 가지고 있고, 
+일부 적은 수의 파일들이 큰 용량을 가지고 있기 떄문에, 
+direct 123개, indirect와 double_indirect에는 1개씩의 block을 할당했다.
+
+			    SUBDIRECTORIES
+			    ==============
+
+---- DATA STRUCTURES ----
+
+>> B1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+1. in filesys/inode.c, “struct inode_disk” struct member 수정
+    - 해당 inode가 directory인지 file인지를 나타내기 위한, struct member “bool is_dir” 추가
+
+2. in threads/thread.h, “struct thread” struct member 수정
+    - 해당 therad의 현재 directory를 나타내기 위한, struct member “struct dir *current_dir” 추가
+
+---- ALGORITHMS ----
+
+>> B2: Describe your code for traversing a user-specified path.  How
+>> do traversals of absolute and relative paths differ?
+path의 첫 번째 char를 검사해서, 만일 ‘/’라면 absolute path, 아닌 경우에는 relative path이다.
+
+---- SYNCHRONIZATION ----
+
+>> B4: How do you prevent races on directory entries?  For example,
+>> only one of two simultaneous attempts to remove a single file
+>> should succeed, as should only one of two simultaneous attempts to
+>> create a file with the same name, and so on.
+inode에 extended_lock을 사용해서 race condition을 방지한다. 
+같은 이름인 directory에 접근하고자 할 때에는 
+하나의 thread의 접근만을 허용하기 때문에 race condition을 막을 수 있다.
+
+>> B5: Does your implementation allow a directory to be removed if it
+>> is open by a process or if it is in use as a process's current
+>> working directory?  If so, what happens to that process's future
+>> file system operations?  If not, how do you prevent it?
+
+directory가 open되어있거나, current thread의 working directory인 경우 directory를 삭제할 수 없도록 했다. 
+삭제하고자 하는 directory가 thread_current()->current_dir과 같은 경우 삭제할 수 없게 했고, 
+삭제하고자 하는 directory의 open_cnt를 확인해서 열려 있는 경우에는 삭제할 수 없도록 했다.
+
+---- RATIONALE ----
+
+>> B6: Explain why you chose to represent the current directory of a
+>> process the way you did.
+process의 current directory는 해당하는 process의 구조체(struct thread의 struct member로 저장)에 기록하는 것이 적절하다고 생각했다.
+
+			     BUFFER CACHE
+			     ============
+
+---- DATA STRUCTURES ----
+
+>> C1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+1. in filesys/buffer_cache.h, “struct buffer_head”
+    - buffer cache의 meta data, buffer cache를 관리하기 위함, 각 buffer cache의 inode, lock, sector, data등의 정보와, 
+dirty, usage, clock 등 buffer cache의 상태를 나타내는 struct member들을 가지고 있다.
+
+2. in filesys/buffer_cache.c, “void * p_buffer_cache” 
+    - point the memory of buffer cache
+
+3. in filesys/buffer_cache.c, ’ #define BUFFER_CACHE_ENTRY_NB 64
+    - The number of Buffer Cache entry, 64개
+
+4. in filesys/buffer_cache.c, “static struct buffer_head buffer_head_table[BUFFER_CACHE_ENTRY_NB]”
+    - array of buffer head
+
+5. in filesys/buffer_cache.c. “static struct buffer_head *clock_hand”
+    - for clock algorithm, buffer cache victim selection
+
+---- ALGORITHMS ----
+
+>> C2: Describe how your cache replacement algorithm chooses a cache
+>> block to evict.
+Use clock algorithm. global variable clock_hand를 사용해서, 64의 buffer head 중 하나를 가리키도록 한다. 
+clock_hand 변수를 사용해서 buffer head table을 돌면서, 만일 가리키는 buffer head의 clock == 0인 경우 
+해당 buffer head를 victim으로 삼아서, 만일 그 버퍼가 dirty라면 디스크로 flush하고, 
+버퍼를 return해서 새로운 값을 위해 사용될 수 있도록 한다.
+
+>> C3: Describe your implementation of write-behind.
+inode_write_at을 호출하면, 바로 디스크에 기록하는 것이 아니라 buffer cache에 기록하고 
+buffer cache의 struct member인 dirty = 1로 설정한다. 만일 해당 buffer cache가 victim으로 선정되는 경우, 
+buffer cache에 write된 내용을 disk로 flush한다. 또한, 모든 프로그램을 종료할 때에, 
+buffer head table을 순회하면서 dirty = 1인 buffer cache에 대해 memory에 기록하는 과정을 거친다.
+
+>> C4: Describe your implementation of read-ahead.
+inode_read_at을 수행하면, 해당 디스크에 바로 접근하는 것이 아니라, 
+bc_read함수를 사용하여 buffer_cache에 해당하는 내용이 있는지를 먼저 살핀다. 
+캐시에 read하고자 하는 내용이 있다면 해당 내용을 가져오고, 없을 때에만 disk에 접근해서 read를 수행하도록 한다.
+
+---- SYNCHRONIZATION ----
+
+>> C5: When one process is actively reading or writing data in a
+>> buffer cache block, how are other processes prevented from evicting
+>> that block?
+struct buffer_head의 struct member 중에는 struct lock bc_lock이 있다. 
+각각의 buffer cache에 접근하고자 할 때에 lock을 획득한 상태에서만 
+reading, writing을 수행할 수 있도록 해서 race condition을 막을 수 있었다.
+
+>> C6: During the eviction of a block from the cache, how are other
+>> processes prevented from attempting to access the block?
+eviction을 수행하는 bc_selection_victim함수에서는 각의 buffer_cache의 bc_lock을 획득한 상태에서만 
+각 buffer cache의 struct member에 접근해서 victim으로 선정할 것인지를 결정하도록 했다. 
+즉, 각 buffer_cache의 lock을 획득한 상태에서 eviction을 진행하도록 해서, 다른 processes가 접근하려는 시도를 막을 수 있었다.
+
+---- RATIONALE ----
+
+>> C7: Describe a file workload likely to benefit from buffer caching,
+>> and workloads likely to benefit from read-ahead and write-behind.
+buffer caching을 사용해서 직접 메모리 디스크에 접근하는 IO의 횟수를 줄여서 efficiency를 높일 수 있다.
+Read ahead, write behind는 큰 파일에 접근하는 경우 순차적으로 탐색하는 데에 효율적이고, write를 자주 하는 경우에 효과적이다.
+
+
+			   SURVEY QUESTIONS
+			   ================
+
+Answering these questions is optional, but it will help us improve the
+course in future quarters.  Feel free to tell us anything you
+want--these questions are just to spur your thoughts.  You may also
+choose to respond anonymously in the course evaluations at the end of
+the quarter.
+
+>> In your opinion, was this assignment, or any one of the three problems
+>> in it, too easy or too hard?  Did it take too long or too little time?
+
+>> Did you find that working on a particular part of the assignment gave
+>> you greater insight into some aspect of OS design?
+
+>> Is there some particular fact or hint we should give students in
+>> future quarters to help them solve the problems?  Conversely, did you
+>> find any of our guidance to be misleading?
+
+>> Do you have any suggestions for the TAs to more effectively assist
+>> students in future quarters?
+
+>> Any other comments?
